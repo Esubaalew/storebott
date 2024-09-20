@@ -1,7 +1,10 @@
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
-from api import get_categories, get_subcategories, get_brands, get_models, get_products, get_product_details, check_stock_availability
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InlineQueryResultArticle, InputTextMessageContent
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, InlineQueryHandler
+from api import get_categories, get_subcategories, get_brands, get_models, get_products, get_product_details, check_stock_availability, search_items, get_brand_details, get_model_details, get_subcategory_details
+from uuid import uuid4
 from dotenv import load_dotenv
+
+# Command handler to show categories
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Start command to show categories."""
     categories = get_categories()
@@ -15,6 +18,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("No categories available.")
 
 
+# Button handler for category, subcategory, brand, model navigation
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle button clicks to build hierarchical inline keyboards."""
     query = update.callback_query
@@ -95,11 +99,58 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await query.edit_message_text("Stock details not available.")
 
 
+async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle inline queries for searching items."""
+    query = update.inline_query.query
+    if not query:
+        return
+
+    
+    results = search_items(query)
+    
+    articles = []
+    for item in results:
+        
+        brand_details = get_brand_details(item['brand'])
+        model_details = get_model_details(item['model'])
+        subcategory_details = get_subcategory_details(item['subcategory'])
+        
+        
+        brand_name = brand_details.get('name') if brand_details else "Unknown Brand"
+        model_name = model_details.get('name') if model_details else "Unknown Model"
+        subcategory_name = subcategory_details.get('name') if subcategory_details else "Unknown Subcategory"
+        
+        
+        articles.append(
+            InlineQueryResultArticle(
+                id=str(uuid4()),
+                title=item['name'],
+                input_message_content=InputTextMessageContent(
+                    f"Product details for {item['name']}:\n"
+                    f"Brand: {brand_name}\n"
+                    f"Model: {model_name}\n"
+                    f"Subcategory: {subcategory_name}\n"
+                    f"Description: {item.get('description', 'No description available')}"
+                ),
+                description=f"Brand: {brand_name}, Model: {model_name}, Subcategory: {subcategory_name}"
+            )
+        )
+    
+    # Answer the inline query with the generated articles
+    await update.inline_query.answer(articles)
+
 
 if __name__ == '__main__':
     import os
     load_dotenv()
+    
+    # Create the application
     app = ApplicationBuilder().token(os.getenv('TOKEN')).build()
+
+    # Add command and query handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(InlineQueryHandler(inline_search))
+
+    # Run the bot
     app.run_polling()
