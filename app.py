@@ -3,10 +3,12 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 from api import get_categories, get_subcategories, get_brands, get_models, get_products, get_product_details, check_stock_availability, search_items, fetch_item_details
 from uuid import uuid4
 from dotenv import load_dotenv
+from telegram.constants import ChatAction
 
 # Command handler to show categories
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Start command to show categories."""
+    await update.message.chat.send_action(ChatAction.TYPING)
     categories = get_categories()
     if categories:
         keyboard = [
@@ -166,6 +168,7 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def text_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle text messages for searching items."""
     query = update.message.text
+    await update.message.chat.send_action(ChatAction.TYPING)
     results = search_items(query)
 
     if results:
