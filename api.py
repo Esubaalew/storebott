@@ -67,3 +67,8 @@ def get_model_details(model_id):
 def get_subcategory_details(subcategory_id):
     response = requests.get(f'{BASE_URL}/subcategories/{subcategory_id}/')
     return response.json() if response.status_code == 200 else None
+
+# Fetch details of a specific item/product directly from the new endpoint
+def fetch_item_details(item_id):
+    response = requests.get(f'{BASE_URL}/items/{item_id}/')
+    return response.json() if response.status_code == 200 else None
