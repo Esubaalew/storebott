@@ -1,17 +1,104 @@
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InlineQueryResultArticle, InputTextMessageContent
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, InlineQueryHandler, MessageHandler, filters, ConversationHandler
-from api import get_categories, get_subcategories, get_brands, get_models, get_products, get_product_details, check_stock_availability, search_items, fetch_item_details, create_request
+from api import (get_categories, get_subcategories, get_brands, get_models, get_products, get_product_details, check_stock_availability, search_items, fetch_item_details, create_request,
+create_message, get_all_requests, get_request_details)
 from uuid import uuid4
 from dotenv import load_dotenv
 from telegram.constants import ChatAction
 import os
 import re
 from datetime import datetime
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 # Conversation states
 REQUEST, PHONE, ADDRESS = range(3)
-# Additional conversation states for live_agent
+# conversation states for live_agent
 LIVE_REQUEST, LIVE_PHONE, LIVE_ADDRESS, LIVE_ADDITIONAL_TEXT = range(3, 7)
+
+# Conversation states for the 'respond' command
+RESPOND_TO_REQUEST, RESPONSE_MESSAGE = range(2)
+
+# Command handler to fetch all requests for admin
+async def list_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List all user requests for the admin."""
+    admin_id = 1648265210  # Replace with your admin ID
+    
+    if update.message.from_user.id != admin_id:
+        await update.message.reply_text("You do not have permission to access this command.")
+        return
+    
+    await update.message.chat.send_action(ChatAction.TYPING)
+    requests = get_all_requests()
+    
+    if requests:
+        message = "📨 *All Requests*\n\n"
+        for req in requests:
+            message += (
+                f"👤 *User ID:* {req['user_id']}\n"
+                f"📝 *Responded:* {'Yes' if req['is_responded'] else 'No'}\n"
+                f"📄 *Additional Text:* {req['additional_text']}\n\n"
+            )
+        await update.message.reply_text(message, parse_mode='MarkdownV2')
+    else:
+        await update.message.reply_text("No requests found.")
+
+# Command handler to start the respond process
+async def respond(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start the process to respond to a request."""
+    admin_id = 1648265210  
+
+    if update.message.from_user.id != admin_id:
+        await update.message.reply_text("You do not have permission to access this command.")
+        return ConversationHandler.END
+
+    await update.message.reply_text("Please enter the Request ID of the request you want to respond to:")
+    return RESPOND_TO_REQUEST
+
+# Handle the request ID input for responding
+async def respond_request_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle the request ID input and fetch user details."""
+    request_id = update.message.text
+    context.user_data['request_id'] = request_id
+
+    # Fetch the request details using the request_id from the API
+    request_details = get_request_details(request_id)
+
+    if request_details:
+        user_id = request_details['user_id']
+        context.user_data['user_id'] = user_id
+        await update.message.reply_text(f"Request found for user {request_details['name']} (User ID: {user_id}).\nPlease enter your response message:")
+        return RESPONSE_MESSAGE
+    else:
+        await update.message.reply_text("Invalid Request ID. Please try again.")
+        return ConversationHandler.END
+
+# Handle the response message input and send the message to the user
+async def send_response(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle the response message and send it to the user."""
+    response_message = update.message.text
+    request_id = context.user_data.get('request_id')
+    user_id = context.user_data.get('user_id')
+    admin_id = update.message.from_user.id 
+
+   
+    message_sent = create_message(request_id=request_id, sender_id=admin_id, content=response_message)
+    
+   
+    await update.message.reply_text(f"Message sent successfully to user {user_id}.")
+        
+   
+    try:
+        await context.bot.send_message(chat_id=user_id, text=response_message)
+    except Exception as e:
+        logging.error(f"Failed to send message to user {user_id}: {e}")
+        await update.message.reply_text(f"Failed to send message to user {user_id} on Telegram. Error: {e}")
+   
+    
+    return ConversationHandler.END
+
+
 
 # Command handler to start the live agent conversation
 async def live_agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -51,7 +138,7 @@ async def live_agent_complete(update: Update, context: ContextTypes.DEFAULT_TYPE
     address = context.user_data.get('address')
     additional_text = context.user_data.get('additional_text')
 
-    # Send the request to the admin using the create_request function from api.py
+    
     request = create_request(user_id=user_id, username=username, name=name, phone=phone, address=address, additional_text=additional_text)
 
     if request:
@@ -328,8 +415,22 @@ if __name__ == '__main__':
     )
     app.add_handler(product_request_conv_handler)
 
+    # Conversation handler for responding to a user's request
+    respond_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("respond", respond)],
+        states={
+            RESPOND_TO_REQUEST: [MessageHandler(filters.TEXT & ~filters.COMMAND, respond_request_id)],
+            RESPONSE_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, send_response)],
+        },
+        fallbacks=[],
+    )
+    
+    # Add the respond conversation handler
+    app.add_handler(respond_conv_handler)
+
     # Add inline search handler
     app.add_handler(InlineQueryHandler(inline_search))
+    app.add_handler(CommandHandler("requests", list_requests))
 
     # Add text search handler, but after the conversation handlers to avoid conflicts
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_search))
