@@ -1,6 +1,6 @@
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InlineQueryResultArticle, InputTextMessageContent
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, InlineQueryHandler, MessageHandler, filters, ConversationHandler
-from api import get_categories, get_subcategories, get_brands, get_models, get_products, get_product_details, check_stock_availability, search_items, fetch_item_details
+from api import get_categories, get_subcategories, get_brands, get_models, get_products, get_product_details, check_stock_availability, search_items, fetch_item_details, create_request
 from uuid import uuid4
 from dotenv import load_dotenv
 from telegram.constants import ChatAction
@@ -10,6 +10,70 @@ from datetime import datetime
 
 # Conversation states
 REQUEST, PHONE, ADDRESS = range(3)
+# Additional conversation states for live_agent
+LIVE_REQUEST, LIVE_PHONE, LIVE_ADDRESS, LIVE_ADDITIONAL_TEXT = range(3, 7)
+
+# Command handler to start the live agent conversation
+async def live_agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start the conversation to request a live agent."""
+    await update.message.chat.send_action(ChatAction.TYPING)
+    await update.message.reply_text("Please provide your name to connect with a live agent:")
+    return LIVE_REQUEST
+
+# Conversation handler for requesting name
+async def live_agent_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle name input for live agent request."""
+    context.user_data['name'] = update.message.text
+    await update.message.reply_text("Please provide your phone number:")
+    return LIVE_PHONE
+
+# Conversation handler for requesting phone number
+async def live_agent_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle phone input for live agent request."""
+    context.user_data['phone'] = update.message.text
+    await update.message.reply_text("Please provide your address:")
+    return LIVE_ADDRESS
+
+# Conversation handler for requesting address
+async def live_agent_address(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle address input for live agent request."""
+    context.user_data['address'] = update.message.text
+    await update.message.reply_text("Any additional details you would like to provide?")
+    return LIVE_ADDITIONAL_TEXT
+
+async def live_agent_complete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle final details and send the request to the admin."""
+    context.user_data['additional_text'] = update.message.text
+    user_id = update.message.from_user.id
+    username = update.message.from_user.username or "No username"
+    name = context.user_data.get('name')
+    phone = context.user_data.get('phone')
+    address = context.user_data.get('address')
+    additional_text = context.user_data.get('additional_text')
+
+    # Send the request to the admin using the create_request function from api.py
+    request = create_request(user_id=user_id, username=username, name=name, phone=phone, address=address, additional_text=additional_text)
+
+    if request:
+        await update.message.reply_text("Your request has been submitted successfully. We will get back to you soon.")
+        
+        # Notify the admin
+        admin_id = 1648265210
+        request_details = (
+            f"📨 *New Live Agent Request*\n\n"
+            f"*Username:* {username}\n"
+            f"*Name:* {name}\n"
+            f"*Phone:* {phone}\n"
+            f"*Address:* {address}\n\n"
+            f"📄 *Additional Information:* {additional_text}"
+        )
+        await context.bot.send_message(chat_id=admin_id, text=request_details, parse_mode='MarkdownV2')
+
+    else:
+        await update.message.reply_text("There was an error submitting your request. Please try again later.")
+    
+    return ConversationHandler.END
+
 
 # Command handler to show categories
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -234,13 +298,26 @@ async def text_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 if __name__ == '__main__':
     load_dotenv()
 
-    
     app = ApplicationBuilder().token(os.getenv('TOKEN')).build()
 
-    
+    # Add /start command to show categories
     app.add_handler(CommandHandler("start", start))
 
-    conv_handler = ConversationHandler(
+    # Define the conversation handler for live agent request
+    live_agent_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("live_agent", live_agent)],
+        states={
+            LIVE_REQUEST: [MessageHandler(filters.TEXT & ~filters.COMMAND, live_agent_name)],
+            LIVE_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, live_agent_phone)],
+            LIVE_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, live_agent_address)],
+            LIVE_ADDITIONAL_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, live_agent_complete)],
+        },
+        fallbacks=[],
+    )
+    app.add_handler(live_agent_conv_handler)
+
+    # Define the conversation handler for product request flow
+    product_request_conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(button_handler)],
         states={
             REQUEST: [MessageHandler(filters.TEXT & ~filters.COMMAND, request_name)],
@@ -249,9 +326,12 @@ if __name__ == '__main__':
         },
         fallbacks=[],
     )
-    app.add_handler(conv_handler)
+    app.add_handler(product_request_conv_handler)
+
+    # Add inline search handler
     app.add_handler(InlineQueryHandler(inline_search))
+
+    # Add text search handler, but after the conversation handlers to avoid conflicts
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_search))
 
-    
     app.run_polling()
