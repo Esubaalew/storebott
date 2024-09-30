@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from telegram.constants import ChatAction
 import os
 import re
+from datetime import datetime
 
 # Conversation states
 REQUEST, PHONE, ADDRESS = range(3)
@@ -130,18 +131,42 @@ async def request_address(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     phone = context.user_data.get('phone')
     address = context.user_data.get('address')
 
+    # Fetch product details
+    product_details = get_product_details(item_id)
+    if product_details:
+        product_info = (
+            f"*Product Name:* {product_details['name']}\n"
+            f"*Brand:* {product_details['brand']}\n"
+            f"*Model:* {product_details['model']}\n"
+        )
+    else:
+        product_info = "Product details not available."
+
+    
+    current_date = datetime.now().strftime('%A, %b %d, %Y')
+
+    
+    username = update.message.from_user.username or "No username"
+
+    
     request_details = (
         f"📨 *New Request*\n\n"
-        f"*Item ID:* {item_id}\n"
+        f"*Date:* {current_date}\n"
+        f"*Username:* {username}\n"
         f"*Name:* {name}\n"
         f"*Phone:* {phone}\n"
-        f"*Address:* {address}"
+        f"*Address:* {address}\n\n"
+        f"🛍️ *Product Information*\n"
+        f"{product_info}"
     )
 
-    admin_id = 1648265210  # Replace with your admin ID
+    
+    admin_id = 1648265210
     await context.bot.send_message(chat_id=admin_id, text=request_details, parse_mode='MarkdownV2')
 
+    
     await update.message.reply_text("Your request has been sent to the admin. We will get back to you soon.")
+    
     return ConversationHandler.END
 
 # Inline search handler
@@ -209,13 +234,12 @@ async def text_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 if __name__ == '__main__':
     load_dotenv()
 
-    # Create the application
+    
     app = ApplicationBuilder().token(os.getenv('TOKEN')).build()
 
-    # Add command and query handlers
+    
     app.add_handler(CommandHandler("start", start))
 
-    # Conversation handler for request flow
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(button_handler)],
         states={
@@ -226,12 +250,8 @@ if __name__ == '__main__':
         fallbacks=[],
     )
     app.add_handler(conv_handler)
-
-    # Inline query handler for inline search
     app.add_handler(InlineQueryHandler(inline_search))
-
-    # Text search handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_search))
 
-    # Start the bot
+    
     app.run_polling()
