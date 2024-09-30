@@ -1,9 +1,14 @@
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InlineQueryResultArticle, InputTextMessageContent
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, InlineQueryHandler, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, InlineQueryHandler, MessageHandler, filters, ConversationHandler
 from api import get_categories, get_subcategories, get_brands, get_models, get_products, get_product_details, check_stock_availability, search_items, fetch_item_details
 from uuid import uuid4
 from dotenv import load_dotenv
 from telegram.constants import ChatAction
+import os
+import re
+
+# Conversation states
+REQUEST, PHONE, ADDRESS = range(3)
 
 # Command handler to show categories
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -20,12 +25,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("No categories available.")
 
 # Button handler for category, subcategory, brand, model navigation
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle button clicks to build hierarchical inline keyboards."""
     query = update.callback_query
     await query.answer()
 
     data = query.data
+
     if data.startswith('category_'):
         category_id = data.split('_')[1]
         subcategories = get_subcategories(category_id)
@@ -78,33 +84,67 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         item_id = data.split('_')[1]
         product_details = get_product_details(item_id)
         if product_details:
-            formatted_details = (
+            # Check stock availability and include it in the product details
+            stock_details = check_stock_availability(item_id)
+            is_available = "Yes" if stock_details and stock_details['is_available'] else "No"
+            formatted_details = re.escape(
                 f"📱 *{product_details['name']}*\n\n"
                 f"*Brand:* {product_details['brand']}\n"
                 f"*Model:* {product_details['model']}\n"
                 f"*Subcategory:* {product_details['subcategory']}\n"
+                f"*Stock Available:* {is_available}\n"
             )
-            # Add a button for checking stock availability
+            # Add a button for making a request
             keyboard = [
-                [InlineKeyboardButton("Check Availability", callback_data=f"check_stock_{item_id}")]
+                [InlineKeyboardButton("Make Request", callback_data=f"make_request_{item_id}")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(formatted_details, reply_markup=reply_markup, parse_mode='MarkdownV2')
         else:
             await query.edit_message_text("No product details available.")
 
-    elif data.startswith('check_stock_'):
-        item_id = data.split('_')[2]
-        stock_details = check_stock_availability(item_id)
-        if stock_details:
-            is_available = "Yes" if stock_details['is_available'] else "No"
-            await query.edit_message_text(f"Stock availability:\n"
-                                          f"Item: {stock_details['item']}\n"
-                                          f"Quantity: {stock_details['quantity']}\n"
-                                          f"Available: {is_available}")
-        else:
-            await query.edit_message_text("Stock details not available.")
+    elif data.startswith('make_request_'):
+        # Save the item_id to context for further use
+        context.user_data['item_id'] = data.split('_')[2]
+        await query.edit_message_text("Please provide your name:")
+        return REQUEST
 
+# Conversation handler for request flow
+async def request_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle name input."""
+    context.user_data['name'] = update.message.text
+    await update.message.reply_text("Please provide your phone number:")
+    return PHONE
+
+async def request_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle phone number input."""
+    context.user_data['phone'] = update.message.text
+    await update.message.reply_text("Please provide your address:")
+    return ADDRESS
+
+async def request_address(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle address input and send the request to the admin."""
+    context.user_data['address'] = update.message.text
+    item_id = context.user_data.get('item_id')
+    name = context.user_data.get('name')
+    phone = context.user_data.get('phone')
+    address = context.user_data.get('address')
+
+    request_details = (
+        f"📨 *New Request*\n\n"
+        f"*Item ID:* {item_id}\n"
+        f"*Name:* {name}\n"
+        f"*Phone:* {phone}\n"
+        f"*Address:* {address}"
+    )
+
+    admin_id = 1648265210  # Replace with your admin ID
+    await context.bot.send_message(chat_id=admin_id, text=request_details, parse_mode='MarkdownV2')
+
+    await update.message.reply_text("Your request has been sent to the admin. We will get back to you soon.")
+    return ConversationHandler.END
+
+# Inline search handler
 async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle inline queries for searching items."""
     query = update.inline_query.query
@@ -112,16 +152,10 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     try:
-        # Perform search using your API
         results = search_items(query)
-        
-
-        
         articles = []
         for item in results:
-            
-            item_details = fetch_item_details(item['id']) 
-            print(f"Details for item '{item['name']}': {item_details}")
+            item_details = fetch_item_details(item['id'])
             if item_details:
                 articles.append(
                     InlineQueryResultArticle(
@@ -137,7 +171,6 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     )
                 )
             else:
-                print(f"Could not fetch details for item ID: {item['id']}")
                 articles.append(
                     InlineQueryResultArticle(
                         id=str(uuid4()),
@@ -148,23 +181,12 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                         description="Details unavailable."
                     )
                 )
-
-        
         await update.inline_query.answer(articles, cache_time=1)
-        print("Inline query answered with articles.")
 
     except Exception as e:
-        print(f"Error processing inline query: {e}")
         await update.inline_query.answer([], switch_pm_text="An error occurred, please try again.", switch_pm_parameter="error")
 
-
-    except Exception as e:
-        print(f"Error processing inline query: {e}")
-        await update.inline_query.answer([], switch_pm_text="An error occurred, please try again.", switch_pm_parameter="error")
-
-
-
-
+# Text search handler
 async def text_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle text messages for searching items."""
     query = update.message.text
@@ -185,7 +207,6 @@ async def text_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("No products found.")
 
 if __name__ == '__main__':
-    import os
     load_dotenv()
 
     # Create the application
@@ -193,9 +214,24 @@ if __name__ == '__main__':
 
     # Add command and query handlers
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(InlineQueryHandler(inline_search))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_search))  # Handle text messages
 
-    # Run the bot
+    # Conversation handler for request flow
+    conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(button_handler)],
+        states={
+            REQUEST: [MessageHandler(filters.TEXT & ~filters.COMMAND, request_name)],
+            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, request_phone)],
+            ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, request_address)],
+        },
+        fallbacks=[],
+    )
+    app.add_handler(conv_handler)
+
+    # Inline query handler for inline search
+    app.add_handler(InlineQueryHandler(inline_search))
+
+    # Text search handler
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_search))
+
+    # Start the bot
     app.run_polling()
