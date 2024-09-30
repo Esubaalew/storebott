@@ -114,7 +114,7 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     try:
         # Perform search using your API
         results = search_items(query)
-        print(f"Search results for '{query}': {results}")
+        
 
         
         articles = []
