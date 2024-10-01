@@ -106,10 +106,11 @@ def create_request(user_id, username, name, phone, address, additional_text):
 # Add a new message
 
 
-def create_message(request_id, sender_id, content):
+def create_message(request_id, sender_id, user_id, content):
     data = {
         "request": request_id,
         "sender_id": sender_id,
+        "user_id": user_id,
         "content": content
     }
     response = requests.post(f'{BASE_URL}/messages/', json=data)

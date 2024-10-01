@@ -103,7 +103,7 @@ async def send_response(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     admin_id = update.message.from_user.id 
 
    
-    message_sent = create_message(request_id=request_id, sender_id=admin_id, content=response_message)
+    message_sent = create_message(request_id=request_id, sender_id=admin_id, user_id=user_id, content=response_message)
     
    
     await update.message.reply_text(f"Message sent successfully to user {user_id}.")
