@@ -29,20 +29,37 @@ async def list_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("You do not have permission to access this command.")
         return
     
-    await update.message.chat.send_action(ChatAction.TYPING)
-    requests = get_all_requests()
+    try:
+        await update.message.chat.send_action(ChatAction.TYPING)
+        requests = get_all_requests()  # Make sure this function exists and works correctly
+
+        if requests:
+            message = "📨 *All Requests*\n\n"
+            for req in requests:
+                # Escape special characters in the text to comply with MarkdownV2
+                request_id = str(req['id']).replace('.', '\\.').replace('-', '\\-').replace('_', '\\_')
+                user_id = str(req['user_id']).replace('-', '\\-')
+                additional_text = req['additional_text'].replace('.', '\\.').replace('-', '\\-').replace('_', '\\_')
+
+                message += (
+                    f"❓ *Request ID:* {request_id}\n"
+                    f"👤 *User ID:* {user_id}\n"
+                    f"📝 *Responded:* {'Yes' if req['is_responded'] else 'No'}\n"
+                    f"📄 *Additional Text:* {additional_text}\n\n"
+                )
+            
+            # Split the message into multiple parts if it exceeds Telegram's character limit (4096 characters)
+            if len(message) > 4096:
+                for i in range(0, len(message), 4096):
+                    await update.message.reply_text(message[i:i+4096], parse_mode='MarkdownV2')
+            else:
+                await update.message.reply_text(message, parse_mode='MarkdownV2')
+        else:
+            await update.message.reply_text("No requests found.")
     
-    if requests:
-        message = "📨 *All Requests*\n\n"
-        for req in requests:
-            message += (
-                f"👤 *User ID:* {req['user_id']}\n"
-                f"📝 *Responded:* {'Yes' if req['is_responded'] else 'No'}\n"
-                f"📄 *Additional Text:* {req['additional_text']}\n\n"
-            )
-        await update.message.reply_text(message, parse_mode='MarkdownV2')
-    else:
-        await update.message.reply_text("No requests found.")
+    except Exception as e:
+        # Log the error and notify the admin
+        await update.message.reply_text(f"An error occurred: {e}")
 
 # Command handler to start the respond process
 async def respond(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
