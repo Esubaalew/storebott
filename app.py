@@ -22,7 +22,7 @@ RESPOND_TO_REQUEST, RESPONSE_MESSAGE = range(2)
 
 # Command handler to fetch all requests for admin
 async def list_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """List all user requests for the admin."""
+    """List all user requests for the admin that have not been responded to."""
     admin_id = 1648265210  # Replace with your admin ID
     
     if update.message.from_user.id != admin_id:
@@ -32,10 +32,13 @@ async def list_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     try:
         await update.message.chat.send_action(ChatAction.TYPING)
         requests = get_all_requests()  # Make sure this function exists and works correctly
+        
+        # Filter requests where is_responded is False
+        pending_requests = [req for req in requests if not req['is_responded']]
 
-        if requests:
-            message = "📨 *All Requests*\n\n"
-            for req in requests:
+        if pending_requests:
+            message = "📨 *Unresponded Requests*\n\n"
+            for req in pending_requests:
                 # Escape special characters in the text to comply with MarkdownV2
                 request_id = str(req['id']).replace('.', '\\.').replace('-', '\\-').replace('_', '\\_')
                 user_id = str(req['user_id']).replace('-', '\\-')
@@ -44,7 +47,6 @@ async def list_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 message += (
                     f"❓ *Request ID:* {request_id}\n"
                     f"👤 *User ID:* {user_id}\n"
-                    f"📝 *Responded:* {'Yes' if req['is_responded'] else 'No'}\n"
                     f"📄 *Additional Text:* {additional_text}\n\n"
                 )
             
@@ -55,11 +57,12 @@ async def list_requests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             else:
                 await update.message.reply_text(message, parse_mode='MarkdownV2')
         else:
-            await update.message.reply_text("No requests found.")
+            await update.message.reply_text("No pending requests found.")
     
     except Exception as e:
         # Log the error and notify the admin
         await update.message.reply_text(f"An error occurred: {e}")
+
 
 # Command handler to start the respond process
 async def respond(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
