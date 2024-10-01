@@ -1,7 +1,7 @@
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InlineQueryResultArticle, InputTextMessageContent
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, InlineQueryHandler, MessageHandler, filters, ConversationHandler
 from api import (get_categories, get_subcategories, get_brands, get_models, get_products, get_product_details, check_stock_availability, search_items, fetch_item_details, create_request,
-create_message, get_all_requests, get_request_details)
+create_message, get_all_requests, get_request_details, get_all_messages)
 from uuid import uuid4
 from dotenv import load_dotenv
 from telegram.constants import ChatAction
@@ -12,6 +12,7 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 
+ADMINS = [1648265210] 
 # Conversation states
 REQUEST, PHONE, ADDRESS = range(3)
 # conversation states for live_agent
@@ -382,32 +383,51 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as e:
         await update.inline_query.answer([], switch_pm_text="An error occurred, please try again.", switch_pm_parameter="error")
 
-# Text search handler
-async def text_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle text messages for searching items."""
-    query = update.message.text
-    await update.message.chat.send_action(ChatAction.TYPING)
-    results = search_items(query)
+# Handler to process user messages and forward if needed
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle incoming messages from users."""
+    user_id = update.message.from_user.id
+    user_message = update.message.text
+    
+    if user_id in ADMINS:
+        await update.message.reply_text("You are an admin. Use /requests to view pending requests and use /respond to respond to a request.")
+        return
 
-    if results:
-        message = "Search results:\n\n"
-        for item in results:
-            message += (
-                f"*Name:* {item['name']}\n"
-                f"*Brand:* {item.get('brand', 'Unknown')}\n"
-                f"*Model:* {item.get('model', 'Unknown')}\n"
-                f"*Subcategory:* {item.get('subcategory', 'Unknown')}\n\n"
-            )
-        await update.message.reply_text(message, parse_mode='MarkdownV2')
+   
+    messages = get_all_messages()
+    print(messages) 
+
+    
+    open_message = None
+    for msg in messages:
+        if int(msg['user_id']) == user_id:
+            open_message = msg
+            break
+
+    
+    if open_message:
+        request_id = open_message['request']
+        sender_id = open_message['sender_id']
+
+        
+        create_message(request_id=request_id, sender_id=sender_id, user_id=user_id, content=user_message)
+
+        
+        await context.bot.send_message(
+            chat_id=sender_id,
+            text=f"Message from user {user_id} (Request ID: {request_id}):\n\n{user_message}"
+        )
+        await update.message.reply_text("Your message has been forwarded to the appropriate sender.")
     else:
-        await update.message.reply_text("No products found.")
+        await update.message.reply_text("No open messages found for you. Use /live_agent command to make a new request.")
+
 
 if __name__ == '__main__':
     load_dotenv()
 
     app = ApplicationBuilder().token(os.getenv('TOKEN')).build()
 
-    # Add /start command to show categories
+   
     app.add_handler(CommandHandler("start", start))
 
     # Define the conversation handler for live agent request
@@ -453,6 +473,6 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("requests", list_requests))
 
     # Add text search handler, but after the conversation handlers to avoid conflicts
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_search))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     app.run_polling()
