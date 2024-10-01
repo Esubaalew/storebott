@@ -124,3 +124,8 @@ def get_all_requests():
 def get_request_details(request_id):
     response = requests.get(f'{BASE_URL}/requests/{request_id}/')
     return response.json() if response.status_code == 200 else None
+
+# get all messages
+def get_all_messages():
+    response = requests.get(f'{BASE_URL}/messages/')
+    return response.json() if response.status_code == 200 else []
